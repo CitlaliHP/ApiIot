@@ -1,32 +1,56 @@
-from flask import Flask, jsonify
-from flask_sqlalchemy import SQLAlchemy
+from fastapi import FastAPI, HTTPException
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.orm import sessionmaker, declarative_base
+from pydantic import BaseModel
 import os
-app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///apiIot.db'
-db = SQLAlchemy(app)
 
-class Iot(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    dispositivo = db.Column(db.String(80))
-    valor = db.Column(db.Integer)
+app = FastAPI()
 
-@app.route('/<int:id>', methods=['GET'])
-def get_device(id):
-    device = Iot.query.get(id)
+engine = create_engine('sqlite:///apiIot.db', connect_args={'check_same_thread': False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+
+class Iot(Base):
+    __tablename__ = "iot"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dispositivo = Column(String(80))
+    valor = Column(Integer)
+
+Base.metadata.create_all(bind=engine)
+
+class IotIn(BaseModel):
+    dispositivo: str
+    valor: int
+
+@app.post("/iot")
+def create_iot(iot_in: IotIn):
+    db = SessionLocal()
+    iot = Iot(**iot_in.dict())
+    db.add(iot)
+    db.commit()
+    db.refresh(iot)
+    return iot
+
+@app.get("/{id}")
+def get_device(id: int):
+    db = SessionLocal()
+    device = db.query(Iot).get(id)
     if device is None:
-        return jsonify({'error': -1}), 404
-    return jsonify({'id': device.id, 'dispositivo': device.dispositivo, 'valor': device.valor})
+        raise HTTPException(status_code=404, detail="Device not found")
+    return {'id': device.id, 'dispositivo': device.dispositivo, 'valor': device.valor}
 
-@app.route('/<int:id>/<int:value>', methods=['PATCH'])
-def update_device(id, value):
-    device = Iot.query.get(id)
+@app.patch("/{id}/{value}")
+def update_device(id: int, value: int):
+    db = SessionLocal()
+    device = db.query(Iot).get(id)
     if device is None:
-        return jsonify({'error': -1}), 404
+        raise HTTPException(status_code=404, detail="Device not found")
     device.valor = value
-    db.session.commit()
-    return jsonify({'valor': device.valor})
+    db.commit()
+    return {'valor': device.valor}
 
-if __name__ == '__main__':
-    if not os.path.exists('apiIot.db'):
-        db.create_all()
-    app.run(debug=True, port=8000)
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
